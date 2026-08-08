@@ -39,6 +39,7 @@ alias la="eza -la --icons --hyperlink --git --git-repos"
 alias lt="eza --tree --icons --hyperlink --git --git-repos"
 alias ltt="eza -la --tree --level=2 --icons --hyperlink --git --git-repos"
 alias lttt="eza -la --tree --level=3 --icons --hyperlink --git --git-repos"
+alias ltttt="eza -la --tree --level=4 --icons --hyperlink --git --git-repos"
 EOF
 
 # Setup NerdFont (JetBrainsMono)
