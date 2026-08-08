@@ -54,6 +54,4 @@ wget -qO "$tmp/JetBrainsMono.zip" \
 unzip -qo "$tmp/JetBrainsMono.zip" -d ~/.local/share/fonts/JetBrainsMono
 fc-cache -fv
 
-source ~/.bashrc
-
-echo "[~]: Done"
+echo "[~]: Done ( source ~/.bashrc or restart the shell )"
