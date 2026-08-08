@@ -34,15 +34,11 @@ alias bat="batcat"
 
 # EZA Aliases
 alias ls="eza"
-alias ll="eza -l"
-alias la="eza -la"
-alias lt="eza --tree"
-alias lt2="eza --tree --level=2"
-alias lta="eza --tree -a"
-alias lta2="eza --tree --level=2 -a"
-alias ltha="eza -lh --tree -a --level=1"
-# alias lg="eza -l --git"
-# alias lft="eza --tree | fd"
+alias ll="eza -l --icons --hyperlink --git --git-repos"
+alias la="eza -la --icons --hyperlink --git --git-repos"
+alias lt="eza --tree--icons --hyperlink --git --git-repos"
+alias ltt="eza -la --tree --level=2 --icons --hyperlink --git --git-repos"
+alias lttt="eza -la --tree --level=3 --icons --hyperlink --git --git-repos"
 EOF
 
 # Setup NerdFont (JetBrainsMono)
@@ -55,3 +51,4 @@ unzip -qo "$tmp/JetBrainsMono.zip" -d ~/.local/share/fonts/JetBrainsMono
 fc-cache -fv
 
 echo "[~]: Done ( source ~/.bashrc or restart the shell )"
+
