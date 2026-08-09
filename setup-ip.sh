@@ -3,9 +3,6 @@
 # Abort on error, unset variables, or failed pipelines
 set -euo pipefail
 
-IFACE="eth0"
-CONN_NAME="ethernet0"
-
 is_ipv4() {
   [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
   local IFS=.
@@ -22,13 +19,21 @@ is_cidr() {
   [[ $prefix =~ ^[0-9]+$ ]] && (( prefix>=0 && prefix<=32 ))
 }
 
+ip -br link
+read -rp "Interface (e.g. eth0, end0): " IFACE
+read -rp "Connection name (e.g. ethernet0): " CONN_NAME
 read -rp "IP address (e.g. 192.168.1.30/24): " IP_ADDR
 read -rp "Gateway (e.g. 192.168.1.1): " GATEWAY
 read -rp "Primary DNS (e.g. 8.8.8.8): " DNS
 read -rp "Seconary DNS (e.g. 1.1.1.1): " SND_DNS
 
-if [[ -z "$IP_ADDR" || -z "$GATEWAY" || -z "$DNS" || -z "$SND_DNS" ]]; then
-  echo "IP, gateway, and DNS and SND_DNS are required."
+if [[ -z "$IFACE" || -z "$CONN_NAME" || -z "$IP_ADDR" || -z "$GATEWAY" || -z "$DNS" || -z "$SND_DNS" ]]; then
+  echo "Interface, connection name, IP, gateway, DNS and secondary DNS are required."
+  exit 1
+fi
+
+if ! ip link show "$IFACE" &>/dev/null; then
+  echo "No such interface: $IFACE"
   exit 1
 fi
 
@@ -51,29 +56,27 @@ if ! is_ipv4 "$SND_DNS"; then
   exit 1
 fi
 
-echo "Using IP=$IP_ADDR Gateway=$GATEWAY DNS=$DNS on $IFACE"
+echo "Using IP=$IP_ADDR Gateway=$GATEWAY DNS=$DNS SND_DNS=$SND_DNS on $IFACE (conn: $CONN_NAME)"
 
 read -rp "Continue? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || exit 0
 
 
 apply_netplan() {
-    # Function: apply static IP via netplan
-    NETPLAN_FILE=$(ls /etc/netplan/*.yaml 2>/dev/null | head -n1)
-    if [ -z "$NETPLAN_FILE" ]; then
-        echo "No netplan config found."
+    # Function: apply static IP via netplan drop-in (does not overwrite other YAML)
+    if [ ! -d /etc/netplan ]; then
+        echo "No /etc/netplan directory found."
         return 1
     fi
 
-    echo "Using netplan config file: $NETPLAN_FILE"
-    sudo cp "$NETPLAN_FILE" "${NETPLAN_FILE}.bak"
-    echo "Backup saved as ${NETPLAN_FILE}.bak"
+    NETPLAN_FILE="/etc/netplan/99-static-${IFACE}.yaml"
 
-    # Set safe permissions on /etc/netplan YAML
-    sudo chmod 600 "$NETPLAN_FILE"
-    sudo chown root:root "$NETPLAN_FILE"
+    if [ -f "$NETPLAN_FILE" ]; then
+        sudo cp "$NETPLAN_FILE" "${NETPLAN_FILE}.bak"
+        echo "Backup saved as ${NETPLAN_FILE}.bak"
+    fi
 
-    # Generate new static IP config
+    echo "Writing netplan drop-in: $NETPLAN_FILE"
     sudo tee "$NETPLAN_FILE" > /dev/null <<EOF
 network:
   version: 2
@@ -90,7 +93,6 @@ network:
         addresses: [$DNS, $SND_DNS]
 EOF
 
-    # Ensure permissions after editing
     sudo chmod 600 "$NETPLAN_FILE"
     sudo chown root:root "$NETPLAN_FILE"
 
@@ -169,7 +171,7 @@ apply_nmcli() {
 }
 
 # Main
-if [ -d /etc/netplan ] && [ "$(ls -A /etc/netplan)" ]; then
+if [ -d /etc/netplan ]; then # && [ "$(ls -A /etc/netplan)" ]; then
     echo "Netplan detected. Applying static IP via netplan..."
     apply_netplan || { echo "Netplan failed, falling back to nmcli..."; apply_nmcli; }
 else
