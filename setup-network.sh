@@ -3,6 +3,8 @@
 # Abort on error, unset variables, or failed pipelines
 set -euo pipefail
 
+have_nmcli() { command -v nmcli >/dev/null 2>&1; }
+
 is_ipv4() {
   [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
   local IFS=.
@@ -19,13 +21,32 @@ is_cidr() {
   [[ $prefix =~ ^[0-9]+$ ]] && (( prefix>=0 && prefix<=32 ))
 }
 
-ip -br link
+echo "=============================="
+
+ip -br addr 2>/dev/null || echo "(ip addr unavailable)"
+
+if have_nmcli; then
+  nmcli -f NAME,DEVICE,FILENAME connection show
+else
+  echo "(nmcli not installed — skipping NetworkManager connections)"
+fi
+
+if [ -d /etc/netplan ]; then
+  ls /etc/netplan/ || true
+else
+  echo "(no /etc/netplan)"
+fi
+
+ip route show default 2>/dev/null || echo "(no default route / ip route unavailable)"
+
+echo "=============================="
+
 read -rp "Interface (e.g. eth0, end0): " IFACE
 read -rp "Connection name (e.g. ethernet0): " CONN_NAME
 read -rp "IP address (e.g. 192.168.1.30/24): " IP_ADDR
 read -rp "Gateway (e.g. 192.168.1.1): " GATEWAY
 read -rp "Primary DNS (e.g. 8.8.8.8): " DNS
-read -rp "Seconary DNS (e.g. 1.1.1.1): " SND_DNS
+read -rp "Secondary DNS (e.g. 1.1.1.1): " SND_DNS
 
 if [[ -z "$IFACE" || -z "$CONN_NAME" || -z "$IP_ADDR" || -z "$GATEWAY" || -z "$DNS" || -z "$SND_DNS" ]]; then
   echo "Interface, connection name, IP, gateway, DNS and secondary DNS are required."
@@ -56,16 +77,28 @@ if ! is_ipv4 "$SND_DNS"; then
   exit 1
 fi
 
+if [ -d /etc/netplan ]; then
+  conflicts=$(grep -l "$IFACE" /etc/netplan/*.yaml 2>/dev/null | grep -v "99-static-${IFACE}.yaml" || true)
+  if [ -n "$conflicts" ]; then
+    echo "Warning: other netplan files also mention $IFACE:"
+    echo "$conflicts"
+    echo "They may add a second IP/default route. Review before continuing."
+  fi
+fi
+
 echo "Using IP=$IP_ADDR Gateway=$GATEWAY DNS=$DNS SND_DNS=$SND_DNS on $IFACE (conn: $CONN_NAME)"
 
 read -rp "Continue? [y/N] " confirm
 [[ "$confirm" =~ ^[Yy]$ ]] || exit 0
 
-
 apply_netplan() {
     # Function: apply static IP via netplan drop-in (does not overwrite other YAML)
     if [ ! -d /etc/netplan ]; then
         echo "No /etc/netplan directory found."
+        return 1
+    fi
+    if ! command -v netplan >/dev/null 2>&1; then
+        echo "netplan command not found."
         return 1
     fi
 
@@ -114,23 +147,32 @@ EOF
     fi
 
     # Rename the NetworkManager connection to match CONN_NAME
-    CURRENT_CONN=$(nmcli -t -f GENERAL.CONNECTION device show $IFACE | cut -d: -f2)
-    if [ -n "$CURRENT_CONN" ] && [ "$CURRENT_CONN" != "$CONN_NAME" ]; then
-        echo "Renaming connection '$CURRENT_CONN' → '$CONN_NAME'"
-        sudo nmcli connection modify "$CURRENT_CONN" connection.id "$CONN_NAME"
-        sudo nmcli connection down "$CONN_NAME"
-        sudo nmcli connection up "$CONN_NAME"
+    if have_nmcli; then
+        CURRENT_CONN=$(nmcli -t -f GENERAL.CONNECTION device show "$IFACE" | cut -d: -f2)
+        if [ -n "$CURRENT_CONN" ] && [ "$CURRENT_CONN" != "$CONN_NAME" ]; then
+            echo "Renaming connection '$CURRENT_CONN' → '$CONN_NAME'"
+            sudo nmcli connection modify "$CURRENT_CONN" connection.id "$CONN_NAME"
+            sudo nmcli connection down "$CONN_NAME"
+            sudo nmcli connection up "$CONN_NAME"
+        fi
+    else
+        echo "(nmcli not installed — skipping connection rename)"
     fi
 
     echo "Current IP on $IFACE:"
-    ip a show $IFACE | grep "inet " || true
+    ip a show "$IFACE" | grep "inet " || true
     return 0
 }
 
 apply_nmcli() {
     # Function: apply static IP via nmcli (baseline)
+    if ! have_nmcli; then
+        echo "nmcli is required for this path."
+        return 1
+    fi
+
     # Get the connection profile bound to the interface
-    CONN=$(nmcli -t -f GENERAL.CONNECTION device show $IFACE | cut -d: -f2)
+    CONN=$(nmcli -t -f GENERAL.CONNECTION device show "$IFACE" | cut -d: -f2)
 
     if [ -z "$CONN" ]; then
         echo "No active connection found for $IFACE"
@@ -162,15 +204,26 @@ apply_nmcli() {
     sudo nmcli connection up "$CONN_NAME"
 
     echo "nmcli static IP applied. Current IP:"
-    ip a show $IFACE | grep "inet " || true
+    ip a show "$IFACE" | grep "inet " || true
     return 0
 }
 
 # Main
-if [ -d /etc/netplan ]; then # && [ "$(ls -A /etc/netplan)" ]; then
+if [ -d /etc/netplan ] && command -v netplan >/dev/null 2>&1; then
     echo "Netplan detected. Applying static IP via netplan..."
-    apply_netplan || { echo "Netplan failed, falling back to nmcli..."; apply_nmcli; }
-else
+    if ! apply_netplan; then
+        echo "Netplan failed, falling back to nmcli..."
+        if have_nmcli; then
+            apply_nmcli
+        else
+            echo "nmcli not available; cannot fall back."
+            exit 1
+        fi
+    fi
+elif have_nmcli; then
     echo "No netplan detected. Applying static IP via nmcli..."
     apply_nmcli
+else
+    echo "Neither netplan nor nmcli available."
+    exit 1
 fi
