@@ -156,13 +156,9 @@ apply_nmcli() {
       ipv4.ignore-auto-routes yes \
       ipv6.method ignore
 
-    # Remove stored DHCP leases
-    sudo rm -rf /var/lib/NetworkManager/*
-
-    # Restart NetworkManager
+    # Clear DHCP leases, restart NM, then activate profile
+    sudo rm -f /var/lib/NetworkManager/*.lease
     sudo systemctl restart NetworkManager
-
-    # Bring the connection up
     sudo nmcli connection up "$CONN_NAME"
 
     echo "nmcli static IP applied. Current IP:"
